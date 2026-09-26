@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>gg · kinetic depth</title>
   <style>
-    :root { color-scheme: light dark; }
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #f4f1ea; }
     body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -16,20 +15,27 @@
       max-width: calc(100vw - 32px); z-index: 2; user-select: none;
     }
     button {
-      appearance: none; border: 1px solid rgba(0,0,0,.18); background: rgba(244,241,234,.82);
+      appearance: none; border: 1px solid rgba(0,0,0,.18); background: rgba(244,241,234,.86);
       color: #151515; padding: 8px 10px; border-radius: 999px; font: inherit; cursor: pointer;
       backdrop-filter: blur(8px);
     }
     button[aria-pressed="true"] { background: #151515; color: #f4f1ea; }
     .hint {
       position: fixed; right: 16px; top: 14px; color: rgba(0,0,0,.48); font-size: 11px;
-      letter-spacing: .03em; pointer-events: none; text-align: right;
+      letter-spacing: .03em; pointer-events: none; text-align: right; z-index: 2;
     }
+    #status {
+      position: fixed; inset: 0; display: grid; place-items: center; padding: 32px; z-index: 1;
+      color: rgba(0,0,0,.55); text-align: center; font-size: 12px; line-height: 1.5;
+      pointer-events: none;
+    }
+    #status.error { color: #8d2c23; }
     @media (prefers-reduced-motion: reduce) { .hint { display: none; } }
   </style>
 </head>
 <body>
   <div id="app"></div>
+  <div id="status">loading Three.js…</div>
   <div class="hint">drag to rotate · double-click to reset</div>
   <div class="ui">
     <button id="motion" aria-pressed="true">motion on</button>
@@ -37,174 +43,201 @@
     <button id="direction" aria-pressed="false">reverse</button>
   </div>
 
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
-    }
-  }
-  </script>
-
   <script type="module">
-    import * as THREE from 'three';
-    import { SVGLoader } from 'three/addons/loaders/SVGLoader.js';
+    const status = document.querySelector('#status');
 
-    const app = document.querySelector('#app');
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    renderer.setClearColor(0xf4f1ea, 1);
-    app.appendChild(renderer.domElement);
+    async function main() {
+      // Direct ESM CDN imports are intentional. htmlpreview.github.io can fail on
+      // bare-specifier/import-map addon imports even when the static HTML loads.
+      const THREE = await import('https://esm.sh/three@0.180.0');
+      const { SVGLoader } = await import('https://esm.sh/three@0.180.0/examples/jsm/loaders/SVGLoader.js?deps=three@0.180.0');
 
-    const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 5000);
-    camera.position.set(0, 0, 900);
-    camera.lookAt(0, 0, 0);
+      const app = document.querySelector('#app');
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setClearColor(0xf4f1ea, 1);
+      app.appendChild(renderer.domElement);
 
-    // Exact g path from gg-green-black.svg in this repo.
-    const gPath = `M590,515 C590,586,537,666,366,666 C366,666,376,639,376,639 C460,637,493,606,493,581 C493,488,20,615,20,402 C20,335,66,288,114,263 C60,229,24,177,24,104 C24,-62,191,-118,341,-118 C419,-118,464,-133,494,-215 C513,-266,538,-279,560,-279 C592,-279,615,-251,605,-216 C581,-129,465,-108,414,-98 C509,-66,589,-11,589,102 C589,257,442,316,311,316 C254,316,195,305,147,281 C129,286,108,306,108,329 C108,440,590,303,590,515Z M306,-94 C244,-94,175,-41,175,101 C175,243,244,296,306,296 C368,296,438,243,438,101 C438,-41,368,-94,306,-94Z`;
+      const scene = new THREE.Scene();
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 5000);
+      camera.position.set(0, 0, 900);
+      camera.lookAt(0, 0, 0);
 
-    const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="-160 -279 945 945">
-        <path d="${gPath}" fill="#0f8a6b" transform="translate(61 10) scale(.81)"/>
-        <path d="${gPath}" fill="#000000" transform="translate(272 28) scale(.66)"/>
-      </svg>`;
+      // Exact g path from gg-green-black.svg in this repo.
+      const gPath = `M590,515 C590,586,537,666,366,666 C366,666,376,639,376,639 C460,637,493,606,493,581 C493,488,20,615,20,402 C20,335,66,288,114,263 C60,229,24,177,24,104 C24,-62,191,-118,341,-118 C419,-118,464,-133,494,-215 C513,-266,538,-279,560,-279 C592,-279,615,-251,605,-216 C581,-129,465,-108,414,-98 C509,-66,589,-11,589,102 C589,257,442,316,311,316 C254,316,195,305,147,281 C129,286,108,306,108,329 C108,440,590,303,590,515Z M306,-94 C244,-94,175,-41,175,101 C175,243,244,296,306,296 C368,296,438,243,438,101 C438,-41,368,-94,306,-94Z`;
 
-    const loader = new SVGLoader();
-    const data = loader.parse(svg);
-    const mark = new THREE.Group();
-    scene.add(mark);
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="-160 -279 945 945">
+          <path d="${gPath}" fill="#0f8a6b" transform="translate(61 10) scale(.81)"/>
+          <path d="${gPath}" fill="#000000" transform="translate(272 28) scale(.66)"/>
+        </svg>`;
 
-    const colorOriginal = [0x0f8a6b, 0x000000];
-    const colorMono = 0x161616;
-    const meshes = [];
+      const loader = new SVGLoader();
+      const data = loader.parse(svg);
+      const mark = new THREE.Group();
 
-    data.paths.forEach((path, pathIndex) => {
-      const shapes = SVGLoader.createShapes(path);
-      shapes.forEach((shape) => {
-        const geometry = new THREE.ExtrudeGeometry(shape, {
-          depth: 34,
-          bevelEnabled: true,
-          bevelSegments: 4,
-          steps: 1,
-          bevelSize: 5,
-          bevelThickness: 5,
-          curveSegments: 18
+      const colorOriginal = [0x0f8a6b, 0x000000];
+      const colorMono = 0x161616;
+      const meshes = [];
+
+      data.paths.forEach((path, pathIndex) => {
+        const shapes = SVGLoader.createShapes(path);
+        shapes.forEach((shape) => {
+          const geometry = new THREE.ExtrudeGeometry(shape, {
+            depth: 34,
+            bevelEnabled: true,
+            bevelSegments: 4,
+            steps: 1,
+            bevelSize: 5,
+            bevelThickness: 5,
+            curveSegments: 18
+          });
+          geometry.computeVertexNormals();
+
+          const material = new THREE.MeshNormalMaterial({
+            side: THREE.DoubleSide,
+            flatShading: false
+          });
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.userData.originalColor = colorOriginal[pathIndex] ?? 0x111111;
+          meshes.push(mesh);
+          mark.add(mesh);
         });
-        const material = new THREE.MeshBasicMaterial({
-          color: colorMono,
-          side: THREE.DoubleSide,
-          depthTest: true,
-          depthWrite: true
-        });
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.userData.originalColor = colorOriginal[pathIndex] ?? 0x111111;
-        meshes.push(mesh);
-        mark.add(mesh);
       });
-    });
 
-    // SVG Y points downward. Flip it, then center the whole mark.
-    mark.scale.y = -1;
-    const box = new THREE.Box3().setFromObject(mark);
-    const center = box.getCenter(new THREE.Vector3());
-    mark.position.sub(center);
+      if (!meshes.length) throw new Error('SVG geometry produced no meshes');
 
-    // Slight depth separation is enough for occlusion changes, but weak enough
-    // that the front/back interpretation can remain unstable near frontal views.
-    if (meshes[0]) meshes[0].position.z = -10;
-    if (meshes[1]) meshes[1].position.z = 10;
+      // SVG Y points downward. Flip it and center the complete mark.
+      mark.scale.y = -1;
+      const box = new THREE.Box3().setFromObject(mark);
+      const center = box.getCenter(new THREE.Vector3());
+      mark.position.sub(center);
 
-    const rig = new THREE.Group();
-    scene.remove(mark);
-    rig.add(mark);
-    scene.add(rig);
+      // Small depth separation allows occlusion to change with rotation while
+      // keeping near-frontal depth cues deliberately weak.
+      if (meshes[0]) meshes[0].position.z = -9;
+      if (meshes[1]) meshes[1].position.z = 9;
 
-    let autoMotion = !matchMedia('(prefers-reduced-motion: reduce)').matches;
-    let mono = true;
-    let direction = 1;
-    let dragging = false;
-    let lastX = 0;
-    let lastY = 0;
-    let userYaw = 0;
-    let userPitch = 0;
-    let phase = 0;
-    let lastTime = performance.now();
+      const rig = new THREE.Group();
+      rig.add(mark);
+      scene.add(rig);
 
-    const motionBtn = document.querySelector('#motion');
-    const monoBtn = document.querySelector('#mono');
-    const directionBtn = document.querySelector('#direction');
-    motionBtn.setAttribute('aria-pressed', String(autoMotion));
-    motionBtn.textContent = autoMotion ? 'motion on' : 'motion off';
+      let autoMotion = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+      let mono = true;
+      let direction = 1;
+      let dragging = false;
+      let lastX = 0;
+      let lastY = 0;
+      let userYaw = 0;
+      let userPitch = 0;
+      let phase = 0;
+      let lastTime = performance.now();
 
-    function setMono(value) {
-      mono = value;
-      monoBtn.setAttribute('aria-pressed', String(mono));
-      meshes.forEach((mesh) => mesh.material.color.setHex(mono ? colorMono : mesh.userData.originalColor));
-      renderer.setClearColor(mono ? 0xf4f1ea : 0xf7f4ed, 1);
-    }
-
-    motionBtn.addEventListener('click', () => {
-      autoMotion = !autoMotion;
+      const motionBtn = document.querySelector('#motion');
+      const monoBtn = document.querySelector('#mono');
+      const directionBtn = document.querySelector('#direction');
       motionBtn.setAttribute('aria-pressed', String(autoMotion));
       motionBtn.textContent = autoMotion ? 'motion on' : 'motion off';
-    });
-    monoBtn.addEventListener('click', () => setMono(!mono));
-    directionBtn.addEventListener('click', () => {
-      direction *= -1;
-      directionBtn.setAttribute('aria-pressed', direction < 0 ? 'true' : 'false');
-    });
 
-    renderer.domElement.addEventListener('pointerdown', (e) => {
-      dragging = true; lastX = e.clientX; lastY = e.clientY;
-      renderer.domElement.setPointerCapture(e.pointerId);
-    });
-    renderer.domElement.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      const dx = e.clientX - lastX;
-      const dy = e.clientY - lastY;
-      lastX = e.clientX; lastY = e.clientY;
-      userYaw += dx * 0.008;
-      userPitch = THREE.MathUtils.clamp(userPitch + dy * 0.006, -0.7, 0.7);
-    });
-    renderer.domElement.addEventListener('pointerup', () => { dragging = false; });
-    renderer.domElement.addEventListener('pointercancel', () => { dragging = false; });
-    renderer.domElement.addEventListener('dblclick', () => {
-      userYaw = 0; userPitch = 0; phase = 0;
-    });
+      function materialFor(mesh, ambiguity) {
+        mesh.material.dispose();
+        mesh.material = ambiguity
+          ? new THREE.MeshBasicMaterial({ color: colorMono, side: THREE.DoubleSide })
+          : new THREE.MeshStandardMaterial({
+              color: mesh.userData.originalColor,
+              roughness: 0.78,
+              metalness: 0.02,
+              side: THREE.DoubleSide
+            });
+      }
 
-    function resize() {
-      const w = innerWidth;
-      const h = innerHeight;
-      renderer.setSize(w, h, false);
-      const aspect = w / h;
-      const halfH = 410;
-      camera.left = -halfH * aspect;
-      camera.right = halfH * aspect;
-      camera.top = halfH;
-      camera.bottom = -halfH;
-      camera.updateProjectionMatrix();
-    }
-    addEventListener('resize', resize);
-    resize();
-    setMono(true);
+      // Soft neutral lights are only visible outside ambiguity mode.
+      const hemi = new THREE.HemisphereLight(0xffffff, 0x9c968b, 2.2);
+      const key = new THREE.DirectionalLight(0xffffff, 3.0);
+      key.position.set(-300, 350, 500);
+      scene.add(hemi, key);
 
-    function animate(now) {
-      const dt = Math.min((now - lastTime) / 1000, 0.05);
-      lastTime = now;
-      if (autoMotion && !dragging) phase += dt * 0.72 * direction;
+      function setMono(value) {
+        mono = value;
+        monoBtn.setAttribute('aria-pressed', String(mono));
+        meshes.forEach((mesh) => materialFor(mesh, mono));
+        renderer.setClearColor(mono ? 0xf4f1ea : 0xf7f4ed, 1);
+      }
 
-      // Oscillate instead of a full spin. The reversal repeatedly removes
-      // a stable direction cue and makes front/back interpretation less certain.
-      const yaw = Math.sin(phase) * 0.42;
-      const roll = Math.sin(phase * 0.5) * 0.035;
-      const pitch = Math.cos(phase * 0.7) * 0.055;
+      motionBtn.addEventListener('click', () => {
+        autoMotion = !autoMotion;
+        motionBtn.setAttribute('aria-pressed', String(autoMotion));
+        motionBtn.textContent = autoMotion ? 'motion on' : 'motion off';
+      });
+      monoBtn.addEventListener('click', () => setMono(!mono));
+      directionBtn.addEventListener('click', () => {
+        direction *= -1;
+        directionBtn.setAttribute('aria-pressed', direction < 0 ? 'true' : 'false');
+      });
 
-      rig.rotation.set(userPitch + pitch, userYaw + yaw, roll);
-      renderer.render(scene, camera);
+      renderer.domElement.addEventListener('pointerdown', (e) => {
+        dragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        renderer.domElement.setPointerCapture(e.pointerId);
+      });
+      renderer.domElement.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - lastX;
+        const dy = e.clientY - lastY;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        userYaw += dx * 0.008;
+        userPitch = THREE.MathUtils.clamp(userPitch + dy * 0.006, -0.7, 0.7);
+      });
+      renderer.domElement.addEventListener('pointerup', () => { dragging = false; });
+      renderer.domElement.addEventListener('pointercancel', () => { dragging = false; });
+      renderer.domElement.addEventListener('dblclick', () => {
+        userYaw = 0;
+        userPitch = 0;
+        phase = 0;
+      });
+
+      function resize() {
+        const w = Math.max(innerWidth, 1);
+        const h = Math.max(innerHeight, 1);
+        renderer.setSize(w, h, false);
+        const aspect = w / h;
+        const halfH = 410;
+        camera.left = -halfH * aspect;
+        camera.right = halfH * aspect;
+        camera.top = halfH;
+        camera.bottom = -halfH;
+        camera.updateProjectionMatrix();
+      }
+      addEventListener('resize', resize);
+      resize();
+      setMono(true);
+      status.remove();
+
+      function animate(now) {
+        const dt = Math.min((now - lastTime) / 1000, 0.05);
+        lastTime = now;
+        if (autoMotion && !dragging) phase += dt * 0.72 * direction;
+
+        // Oscillation rather than a full spin repeatedly removes a stable
+        // rotation-direction cue and emphasizes kinetic-depth ambiguity.
+        const yaw = Math.sin(phase) * 0.42;
+        const roll = Math.sin(phase * 0.5) * 0.035;
+        const pitch = Math.cos(phase * 0.7) * 0.055;
+        rig.rotation.set(userPitch + pitch, userYaw + yaw, roll);
+
+        renderer.render(scene, camera);
+        requestAnimationFrame(animate);
+      }
       requestAnimationFrame(animate);
     }
-    requestAnimationFrame(animate);
+
+    main().catch((error) => {
+      console.error(error);
+      status.classList.add('error');
+      status.innerHTML = `Could not start the Three.js demo.<br>${String(error.message || error)}`;
+    });
   </script>
 </body>
 </html>
