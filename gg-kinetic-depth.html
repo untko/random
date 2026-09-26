@@ -5,9 +5,18 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>gg · kinetic depth</title>
   <style>
+    :root {
+      --bg: #f4f1ea;
+      --fg: #151515;
+      --muted: rgba(0,0,0,.46);
+      --border: rgba(0,0,0,.16);
+      --button-bg: rgba(244,241,234,.90);
+      --active-bg: #151515;
+      --active-fg: #f4f1ea;
+    }
     * { box-sizing: border-box; }
-    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #f4f1ea; }
-    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; transition: background .15s linear; }
     #app { position: fixed; inset: 0; }
     canvas { display: block; width: 100%; height: 100%; touch-action: none; }
     .ui {
@@ -15,21 +24,21 @@
       max-width: calc(100vw - 28px); z-index: 2; user-select: none;
     }
     button {
-      appearance: none; border: 1px solid rgba(0,0,0,.16); background: rgba(244,241,234,.9);
-      color: #151515; padding: 8px 10px; border-radius: 999px; font: inherit; font-size: 11px;
+      appearance: none; border: 1px solid var(--border); background: var(--button-bg);
+      color: var(--fg); padding: 8px 10px; border-radius: 999px; font: inherit; font-size: 11px;
       cursor: pointer; backdrop-filter: blur(8px);
     }
-    button[aria-pressed="true"] { background: #151515; color: #f4f1ea; }
+    button[aria-pressed="true"] { background: var(--active-bg); color: var(--active-fg); }
     .meta {
-      position: fixed; right: 14px; top: 12px; z-index: 2; color: rgba(0,0,0,.46);
+      position: fixed; right: 14px; top: 12px; z-index: 2; color: var(--muted);
       font-size: 10px; line-height: 1.55; text-align: right; pointer-events: none;
     }
     #status {
       position: fixed; inset: 0; display: grid; place-items: center; padding: 32px; z-index: 1;
-      color: rgba(0,0,0,.52); text-align: center; font-size: 12px; line-height: 1.5;
+      color: var(--muted); text-align: center; font-size: 12px; line-height: 1.5;
       pointer-events: none;
     }
-    #status.error { color: #8d2c23; }
+    #status.error { color: #b3483d; }
   </style>
 </head>
 <body>
@@ -39,6 +48,8 @@
   <div class="ui">
     <button id="motion" aria-pressed="true">motion on</button>
     <button id="reverse" aria-pressed="false">reverse physical rotation</button>
+    <button id="density">dots: 14k</button>
+    <button id="theme" aria-pressed="false">theme: light</button>
     <button id="reset">reset</button>
   </div>
 
@@ -51,7 +62,6 @@
       const app = document.querySelector('#app');
       const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
       renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-      renderer.setClearColor(0xf4f1ea, 1);
       renderer.sortObjects = false;
       app.appendChild(renderer.domElement);
 
@@ -63,13 +73,12 @@
       // Exact letter path from gg-green-black.svg in this repository.
       const gPath = `M590,515 C590,586,537,666,366,666 C366,666,376,639,376,639 C460,637,493,606,493,581 C493,488,20,615,20,402 C20,335,66,288,114,263 C60,229,24,177,24,104 C24,-62,191,-118,341,-118 C419,-118,464,-133,494,-215 C513,-266,538,-279,560,-279 C592,-279,615,-251,605,-216 C581,-129,465,-108,414,-98 C509,-66,589,-11,589,102 C589,257,442,316,311,316 C254,316,195,305,147,281 C129,286,108,306,108,329 C108,440,590,303,590,515Z M306,-94 C244,-94,175,-41,175,101 C175,243,244,296,306,296 C368,296,438,243,438,101 C438,-41,368,-94,306,-94Z`;
 
-      // Build a persistent random-dot 3D volume shaped like the two g letters.
-      // The points have real Z coordinates for motion, but Z never affects their
-      // size, brightness, or visibility. That is the kinetic-depth ambiguity.
       const testCanvas = document.createElement('canvas');
       const ctx = testCanvas.getContext('2d');
       if (!ctx || typeof Path2D === 'undefined') throw new Error('Path2D is not supported in this browser');
       const path = new Path2D(gPath);
+      const bounds = { minX: 20, maxX: 615, minY: -279, maxY: 666 };
+      const depth = 300;
 
       function mulberry32(seed) {
         return function () {
@@ -79,51 +88,17 @@
           return ((t ^ t >>> 14) >>> 0) / 4294967296;
         };
       }
-      const rand = mulberry32(0x4747);
 
-      const bounds = { minX: 20, maxX: 615, minY: -279, maxY: 666 };
-      const transforms = [
-        { tx: 61,  ty: 10, s: 0.81, n: 5200 },
-        { tx: 272, ty: 28, s: 0.66, n: 3600 }
+      // More dots strengthen the structure-from-motion impression, but smaller
+      // dots at the denser settings keep the stimulus from becoming a solid fill.
+      const densityPresets = [
+        { label: '5.8k', n1: 3400, n2: 2400, size: 2.9 },
+        { label: '8.8k', n1: 5200, n2: 3600, size: 2.6 },
+        { label: '14k',  n1: 8200, n2: 5800, size: 2.3 },
+        { label: '20k',  n1: 12000, n2: 8000, size: 2.0 }
       ];
-      const depth = 300;
-      const positions = [];
+      let densityIndex = 2;
 
-      for (const tr of transforms) {
-        let accepted = 0;
-        let attempts = 0;
-        const maxAttempts = tr.n * 12;
-        while (accepted < tr.n && attempts++ < maxAttempts) {
-          const x0 = bounds.minX + rand() * (bounds.maxX - bounds.minX);
-          const y0 = bounds.minY + rand() * (bounds.maxY - bounds.minY);
-          if (!ctx.isPointInPath(path, x0, y0, 'evenodd')) continue;
-
-          const x = tr.tx + tr.s * x0;
-          const y = -(tr.ty + tr.s * y0); // SVG Y-down -> Three.js Y-up
-          const z = (rand() - 0.5) * depth;
-          positions.push(x, y, z);
-          accepted++;
-        }
-      }
-
-      if (positions.length < 3000) throw new Error('Could not sample enough logo points');
-
-      // Center the cloud using its actual sampled bounds.
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      for (let i = 0; i < positions.length; i += 3) {
-        minX = Math.min(minX, positions[i]);
-        maxX = Math.max(maxX, positions[i]);
-        minY = Math.min(minY, positions[i + 1]);
-        maxY = Math.max(maxY, positions[i + 1]);
-      }
-      const cx = (minX + maxX) * 0.5;
-      const cy = (minY + maxY) * 0.5;
-      for (let i = 0; i < positions.length; i += 3) {
-        positions[i] -= cx;
-        positions[i + 1] -= cy;
-      }
-
-      // Circular dot sprite. Every point has exactly the same screen-space size.
       const dotCanvas = document.createElement('canvas');
       dotCanvas.width = dotCanvas.height = 32;
       const dctx = dotCanvas.getContext('2d');
@@ -133,22 +108,108 @@
       dctx.fill();
       const dotTexture = new THREE.CanvasTexture(dotCanvas);
 
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      const material = new THREE.PointsMaterial({
-        color: 0x171717,
-        size: 2.6,
-        map: dotTexture,
-        alphaTest: 0.35,
-        transparent: true,
-        sizeAttenuation: false,
-        depthTest: false,
-        depthWrite: false,
-        blending: THREE.NormalBlending
-      });
-      const cloud = new THREE.Points(geometry, material);
-      cloud.frustumCulled = false;
-      scene.add(cloud);
+      let cloud = null;
+      let darkTheme = false;
+
+      function samplePositions(preset) {
+        // Reset seed so each density level is deterministic rather than flickering
+        // to a completely unrelated random cloud every time the option changes.
+        const rand = mulberry32(0x4747 + densityIndex * 997);
+        const transforms = [
+          { tx: 61,  ty: 10, s: 0.81, n: preset.n1 },
+          { tx: 272, ty: 28, s: 0.66, n: preset.n2 }
+        ];
+        const positions = [];
+
+        for (const tr of transforms) {
+          let accepted = 0;
+          let attempts = 0;
+          const maxAttempts = tr.n * 12;
+          while (accepted < tr.n && attempts++ < maxAttempts) {
+            const x0 = bounds.minX + rand() * (bounds.maxX - bounds.minX);
+            const y0 = bounds.minY + rand() * (bounds.maxY - bounds.minY);
+            if (!ctx.isPointInPath(path, x0, y0, 'evenodd')) continue;
+
+            const x = tr.tx + tr.s * x0;
+            const y = -(tr.ty + tr.s * y0);
+            const z = (rand() - 0.5) * depth;
+            positions.push(x, y, z);
+            accepted++;
+          }
+        }
+
+        if (positions.length < 3000) throw new Error('Could not sample enough logo points');
+
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (let i = 0; i < positions.length; i += 3) {
+          minX = Math.min(minX, positions[i]);
+          maxX = Math.max(maxX, positions[i]);
+          minY = Math.min(minY, positions[i + 1]);
+          maxY = Math.max(maxY, positions[i + 1]);
+        }
+        const cx = (minX + maxX) * 0.5;
+        const cy = (minY + maxY) * 0.5;
+        for (let i = 0; i < positions.length; i += 3) {
+          positions[i] -= cx;
+          positions[i + 1] -= cy;
+        }
+        return positions;
+      }
+
+      function themeValues() {
+        return darkTheme
+          ? { bg: 0x111315, dot: 0xf4f1ea, css: {
+              bg: '#111315', fg: '#f4f1ea', muted: 'rgba(244,241,234,.54)',
+              border: 'rgba(255,255,255,.18)', buttonBg: 'rgba(17,19,21,.90)',
+              activeBg: '#f4f1ea', activeFg: '#111315'
+            }}
+          : { bg: 0xf4f1ea, dot: 0x171717, css: {
+              bg: '#f4f1ea', fg: '#151515', muted: 'rgba(0,0,0,.46)',
+              border: 'rgba(0,0,0,.16)', buttonBg: 'rgba(244,241,234,.90)',
+              activeBg: '#151515', activeFg: '#f4f1ea'
+            }};
+      }
+
+      function applyTheme() {
+        const theme = themeValues();
+        renderer.setClearColor(theme.bg, 1);
+        if (cloud) cloud.material.color.setHex(theme.dot);
+        const root = document.documentElement.style;
+        root.setProperty('--bg', theme.css.bg);
+        root.setProperty('--fg', theme.css.fg);
+        root.setProperty('--muted', theme.css.muted);
+        root.setProperty('--border', theme.css.border);
+        root.setProperty('--button-bg', theme.css.buttonBg);
+        root.setProperty('--active-bg', theme.css.activeBg);
+        root.setProperty('--active-fg', theme.css.activeFg);
+      }
+
+      function buildCloud() {
+        const preset = densityPresets[densityIndex];
+        const positions = samplePositions(preset);
+        if (cloud) {
+          scene.remove(cloud);
+          cloud.geometry.dispose();
+          cloud.material.dispose();
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        const material = new THREE.PointsMaterial({
+          color: themeValues().dot,
+          size: preset.size,
+          map: dotTexture,
+          alphaTest: 0.35,
+          transparent: true,
+          sizeAttenuation: false,
+          depthTest: false,
+          depthWrite: false,
+          blending: THREE.NormalBlending
+        });
+        cloud = new THREE.Points(geometry, material);
+        cloud.frustumCulled = false;
+        scene.add(cloud);
+      }
 
       let running = !matchMedia('(prefers-reduced-motion: reduce)').matches;
       let direction = 1;
@@ -156,12 +217,15 @@
       let dragging = false;
       let lastX = 0;
       let lastTime = performance.now();
-      const angularSpeed = THREE.MathUtils.degToRad(28); // degrees per second
+      const angularSpeed = THREE.MathUtils.degToRad(28);
 
       const motionBtn = document.querySelector('#motion');
       const reverseBtn = document.querySelector('#reverse');
+      const densityBtn = document.querySelector('#density');
+      const themeBtn = document.querySelector('#theme');
       const resetBtn = document.querySelector('#reset');
       const angleLabel = document.querySelector('#angle');
+
       motionBtn.setAttribute('aria-pressed', String(running));
       motionBtn.textContent = running ? 'motion on' : 'motion off';
 
@@ -174,6 +238,19 @@
       reverseBtn.addEventListener('click', () => {
         direction *= -1;
         reverseBtn.setAttribute('aria-pressed', direction < 0 ? 'true' : 'false');
+      });
+
+      densityBtn.addEventListener('click', () => {
+        densityIndex = (densityIndex + 1) % densityPresets.length;
+        densityBtn.textContent = `dots: ${densityPresets[densityIndex].label}`;
+        buildCloud();
+      });
+
+      themeBtn.addEventListener('click', () => {
+        darkTheme = !darkTheme;
+        themeBtn.setAttribute('aria-pressed', String(darkTheme));
+        themeBtn.textContent = `theme: ${darkTheme ? 'dark' : 'light'}`;
+        applyTheme();
       });
 
       resetBtn.addEventListener('click', () => { angle = 0; });
@@ -197,8 +274,6 @@
         const h = Math.max(innerHeight, 1);
         renderer.setSize(w, h, false);
         const aspect = w / h;
-
-        // Fit the full gg even on narrow phones.
         const halfH = Math.max(470, 390 / aspect);
         camera.left = -halfH * aspect;
         camera.right = halfH * aspect;
@@ -208,17 +283,16 @@
       }
       addEventListener('resize', resize);
       resize();
+      buildCloud();
+      applyTheme();
       status.remove();
 
       function animate(now) {
         const dt = Math.min((now - lastTime) / 1000, 0.05);
         lastTime = now;
-
-        // Continuous uniform 360° rotation around Y. No oscillation.
         if (running && !dragging) angle += angularSpeed * dt * direction;
         angle = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
         cloud.rotation.y = angle;
-
         angleLabel.textContent = `${Math.round(THREE.MathUtils.radToDeg(angle)) % 360}°`;
         renderer.render(scene, camera);
         requestAnimationFrame(animate);
