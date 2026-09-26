@@ -11,199 +11,195 @@
     #app { position: fixed; inset: 0; }
     canvas { display: block; width: 100%; height: 100%; touch-action: none; }
     .ui {
-      position: fixed; left: 16px; bottom: 16px; display: flex; flex-wrap: wrap; gap: 8px;
-      max-width: calc(100vw - 32px); z-index: 2; user-select: none;
+      position: fixed; left: 14px; bottom: 14px; display: flex; flex-wrap: wrap; gap: 7px;
+      max-width: calc(100vw - 28px); z-index: 2; user-select: none;
     }
     button {
-      appearance: none; border: 1px solid rgba(0,0,0,.18); background: rgba(244,241,234,.86);
-      color: #151515; padding: 8px 10px; border-radius: 999px; font: inherit; cursor: pointer;
-      backdrop-filter: blur(8px);
+      appearance: none; border: 1px solid rgba(0,0,0,.16); background: rgba(244,241,234,.9);
+      color: #151515; padding: 8px 10px; border-radius: 999px; font: inherit; font-size: 11px;
+      cursor: pointer; backdrop-filter: blur(8px);
     }
     button[aria-pressed="true"] { background: #151515; color: #f4f1ea; }
-    .hint {
-      position: fixed; right: 16px; top: 14px; color: rgba(0,0,0,.48); font-size: 11px;
-      letter-spacing: .03em; pointer-events: none; text-align: right; z-index: 2;
+    .meta {
+      position: fixed; right: 14px; top: 12px; z-index: 2; color: rgba(0,0,0,.46);
+      font-size: 10px; line-height: 1.55; text-align: right; pointer-events: none;
     }
     #status {
       position: fixed; inset: 0; display: grid; place-items: center; padding: 32px; z-index: 1;
-      color: rgba(0,0,0,.55); text-align: center; font-size: 12px; line-height: 1.5;
+      color: rgba(0,0,0,.52); text-align: center; font-size: 12px; line-height: 1.5;
       pointer-events: none;
     }
     #status.error { color: #8d2c23; }
-    @media (prefers-reduced-motion: reduce) { .hint { display: none; } }
   </style>
 </head>
 <body>
   <div id="app"></div>
-  <div id="status">loading Three.js…</div>
-  <div class="hint">drag to rotate · double-click to reset</div>
+  <div id="status">loading kinetic-depth stimulus…</div>
+  <div class="meta"><span id="angle">0°</span><br>orthographic · no depth cues<br>drag horizontally to rotate</div>
   <div class="ui">
     <button id="motion" aria-pressed="true">motion on</button>
-    <button id="mono" aria-pressed="true">ambiguity mode</button>
-    <button id="direction" aria-pressed="false">reverse</button>
+    <button id="reverse" aria-pressed="false">reverse physical rotation</button>
+    <button id="reset">reset</button>
   </div>
 
   <script type="module">
     const status = document.querySelector('#status');
 
     async function main() {
-      // Direct ESM CDN imports are intentional. htmlpreview.github.io can fail on
-      // bare-specifier/import-map addon imports even when the static HTML loads.
       const THREE = await import('https://esm.sh/three@0.180.0');
-      const { SVGLoader } = await import('https://esm.sh/three@0.180.0/examples/jsm/loaders/SVGLoader.js?deps=three@0.180.0');
 
       const app = document.querySelector('#app');
       const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
       renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
       renderer.setClearColor(0xf4f1ea, 1);
+      renderer.sortObjects = false;
       app.appendChild(renderer.domElement);
 
       const scene = new THREE.Scene();
-      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 5000);
-      camera.position.set(0, 0, 900);
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 3000);
+      camera.position.set(0, 0, 1000);
       camera.lookAt(0, 0, 0);
 
-      // Exact g path from gg-green-black.svg in this repo.
+      // Exact letter path from gg-green-black.svg in this repository.
       const gPath = `M590,515 C590,586,537,666,366,666 C366,666,376,639,376,639 C460,637,493,606,493,581 C493,488,20,615,20,402 C20,335,66,288,114,263 C60,229,24,177,24,104 C24,-62,191,-118,341,-118 C419,-118,464,-133,494,-215 C513,-266,538,-279,560,-279 C592,-279,615,-251,605,-216 C581,-129,465,-108,414,-98 C509,-66,589,-11,589,102 C589,257,442,316,311,316 C254,316,195,305,147,281 C129,286,108,306,108,329 C108,440,590,303,590,515Z M306,-94 C244,-94,175,-41,175,101 C175,243,244,296,306,296 C368,296,438,243,438,101 C438,-41,368,-94,306,-94Z`;
 
-      const svg = `
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="-160 -279 945 945">
-          <path d="${gPath}" fill="#0f8a6b" transform="translate(61 10) scale(.81)"/>
-          <path d="${gPath}" fill="#000000" transform="translate(272 28) scale(.66)"/>
-        </svg>`;
+      // Build a persistent random-dot 3D volume shaped like the two g letters.
+      // The points have real Z coordinates for motion, but Z never affects their
+      // size, brightness, or visibility. That is the kinetic-depth ambiguity.
+      const testCanvas = document.createElement('canvas');
+      const ctx = testCanvas.getContext('2d');
+      if (!ctx || typeof Path2D === 'undefined') throw new Error('Path2D is not supported in this browser');
+      const path = new Path2D(gPath);
 
-      const loader = new SVGLoader();
-      const data = loader.parse(svg);
-      const mark = new THREE.Group();
+      function mulberry32(seed) {
+        return function () {
+          let t = seed += 0x6D2B79F5;
+          t = Math.imul(t ^ t >>> 15, t | 1);
+          t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+      }
+      const rand = mulberry32(0x4747);
 
-      const colorOriginal = [0x0f8a6b, 0x000000];
-      const colorMono = 0x161616;
-      const meshes = [];
+      const bounds = { minX: 20, maxX: 615, minY: -279, maxY: 666 };
+      const transforms = [
+        { tx: 61,  ty: 10, s: 0.81, n: 5200 },
+        { tx: 272, ty: 28, s: 0.66, n: 3600 }
+      ];
+      const depth = 300;
+      const positions = [];
 
-      data.paths.forEach((path, pathIndex) => {
-        const shapes = SVGLoader.createShapes(path);
-        shapes.forEach((shape) => {
-          const geometry = new THREE.ExtrudeGeometry(shape, {
-            depth: 34,
-            bevelEnabled: true,
-            bevelSegments: 4,
-            steps: 1,
-            bevelSize: 5,
-            bevelThickness: 5,
-            curveSegments: 18
-          });
-          geometry.computeVertexNormals();
+      for (const tr of transforms) {
+        let accepted = 0;
+        let attempts = 0;
+        const maxAttempts = tr.n * 12;
+        while (accepted < tr.n && attempts++ < maxAttempts) {
+          const x0 = bounds.minX + rand() * (bounds.maxX - bounds.minX);
+          const y0 = bounds.minY + rand() * (bounds.maxY - bounds.minY);
+          if (!ctx.isPointInPath(path, x0, y0, 'evenodd')) continue;
 
-          const material = new THREE.MeshNormalMaterial({
-            side: THREE.DoubleSide,
-            flatShading: false
-          });
-          const mesh = new THREE.Mesh(geometry, material);
-          mesh.userData.originalColor = colorOriginal[pathIndex] ?? 0x111111;
-          meshes.push(mesh);
-          mark.add(mesh);
-        });
+          const x = tr.tx + tr.s * x0;
+          const y = -(tr.ty + tr.s * y0); // SVG Y-down -> Three.js Y-up
+          const z = (rand() - 0.5) * depth;
+          positions.push(x, y, z);
+          accepted++;
+        }
+      }
+
+      if (positions.length < 3000) throw new Error('Could not sample enough logo points');
+
+      // Center the cloud using its actual sampled bounds.
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (let i = 0; i < positions.length; i += 3) {
+        minX = Math.min(minX, positions[i]);
+        maxX = Math.max(maxX, positions[i]);
+        minY = Math.min(minY, positions[i + 1]);
+        maxY = Math.max(maxY, positions[i + 1]);
+      }
+      const cx = (minX + maxX) * 0.5;
+      const cy = (minY + maxY) * 0.5;
+      for (let i = 0; i < positions.length; i += 3) {
+        positions[i] -= cx;
+        positions[i + 1] -= cy;
+      }
+
+      // Circular dot sprite. Every point has exactly the same screen-space size.
+      const dotCanvas = document.createElement('canvas');
+      dotCanvas.width = dotCanvas.height = 32;
+      const dctx = dotCanvas.getContext('2d');
+      dctx.fillStyle = '#fff';
+      dctx.beginPath();
+      dctx.arc(16, 16, 13, 0, Math.PI * 2);
+      dctx.fill();
+      const dotTexture = new THREE.CanvasTexture(dotCanvas);
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      const material = new THREE.PointsMaterial({
+        color: 0x171717,
+        size: 2.6,
+        map: dotTexture,
+        alphaTest: 0.35,
+        transparent: true,
+        sizeAttenuation: false,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.NormalBlending
       });
+      const cloud = new THREE.Points(geometry, material);
+      cloud.frustumCulled = false;
+      scene.add(cloud);
 
-      if (!meshes.length) throw new Error('SVG geometry produced no meshes');
-
-      // SVG Y points downward. Flip it and center the complete mark.
-      mark.scale.y = -1;
-      const box = new THREE.Box3().setFromObject(mark);
-      const center = box.getCenter(new THREE.Vector3());
-      mark.position.sub(center);
-
-      // Small depth separation allows occlusion to change with rotation while
-      // keeping near-frontal depth cues deliberately weak.
-      if (meshes[0]) meshes[0].position.z = -9;
-      if (meshes[1]) meshes[1].position.z = 9;
-
-      const rig = new THREE.Group();
-      rig.add(mark);
-      scene.add(rig);
-
-      let autoMotion = !matchMedia('(prefers-reduced-motion: reduce)').matches;
-      let mono = true;
+      let running = !matchMedia('(prefers-reduced-motion: reduce)').matches;
       let direction = 1;
+      let angle = 0;
       let dragging = false;
       let lastX = 0;
-      let lastY = 0;
-      let userYaw = 0;
-      let userPitch = 0;
-      let phase = 0;
       let lastTime = performance.now();
+      const angularSpeed = THREE.MathUtils.degToRad(28); // degrees per second
 
       const motionBtn = document.querySelector('#motion');
-      const monoBtn = document.querySelector('#mono');
-      const directionBtn = document.querySelector('#direction');
-      motionBtn.setAttribute('aria-pressed', String(autoMotion));
-      motionBtn.textContent = autoMotion ? 'motion on' : 'motion off';
-
-      function materialFor(mesh, ambiguity) {
-        mesh.material.dispose();
-        mesh.material = ambiguity
-          ? new THREE.MeshBasicMaterial({ color: colorMono, side: THREE.DoubleSide })
-          : new THREE.MeshStandardMaterial({
-              color: mesh.userData.originalColor,
-              roughness: 0.78,
-              metalness: 0.02,
-              side: THREE.DoubleSide
-            });
-      }
-
-      // Soft neutral lights are only visible outside ambiguity mode.
-      const hemi = new THREE.HemisphereLight(0xffffff, 0x9c968b, 2.2);
-      const key = new THREE.DirectionalLight(0xffffff, 3.0);
-      key.position.set(-300, 350, 500);
-      scene.add(hemi, key);
-
-      function setMono(value) {
-        mono = value;
-        monoBtn.setAttribute('aria-pressed', String(mono));
-        meshes.forEach((mesh) => materialFor(mesh, mono));
-        renderer.setClearColor(mono ? 0xf4f1ea : 0xf7f4ed, 1);
-      }
+      const reverseBtn = document.querySelector('#reverse');
+      const resetBtn = document.querySelector('#reset');
+      const angleLabel = document.querySelector('#angle');
+      motionBtn.setAttribute('aria-pressed', String(running));
+      motionBtn.textContent = running ? 'motion on' : 'motion off';
 
       motionBtn.addEventListener('click', () => {
-        autoMotion = !autoMotion;
-        motionBtn.setAttribute('aria-pressed', String(autoMotion));
-        motionBtn.textContent = autoMotion ? 'motion on' : 'motion off';
+        running = !running;
+        motionBtn.setAttribute('aria-pressed', String(running));
+        motionBtn.textContent = running ? 'motion on' : 'motion off';
       });
-      monoBtn.addEventListener('click', () => setMono(!mono));
-      directionBtn.addEventListener('click', () => {
+
+      reverseBtn.addEventListener('click', () => {
         direction *= -1;
-        directionBtn.setAttribute('aria-pressed', direction < 0 ? 'true' : 'false');
+        reverseBtn.setAttribute('aria-pressed', direction < 0 ? 'true' : 'false');
       });
+
+      resetBtn.addEventListener('click', () => { angle = 0; });
 
       renderer.domElement.addEventListener('pointerdown', (e) => {
         dragging = true;
         lastX = e.clientX;
-        lastY = e.clientY;
         renderer.domElement.setPointerCapture(e.pointerId);
       });
       renderer.domElement.addEventListener('pointermove', (e) => {
         if (!dragging) return;
         const dx = e.clientX - lastX;
-        const dy = e.clientY - lastY;
         lastX = e.clientX;
-        lastY = e.clientY;
-        userYaw += dx * 0.008;
-        userPitch = THREE.MathUtils.clamp(userPitch + dy * 0.006, -0.7, 0.7);
+        angle += dx * 0.009;
       });
       renderer.domElement.addEventListener('pointerup', () => { dragging = false; });
       renderer.domElement.addEventListener('pointercancel', () => { dragging = false; });
-      renderer.domElement.addEventListener('dblclick', () => {
-        userYaw = 0;
-        userPitch = 0;
-        phase = 0;
-      });
 
       function resize() {
         const w = Math.max(innerWidth, 1);
         const h = Math.max(innerHeight, 1);
         renderer.setSize(w, h, false);
         const aspect = w / h;
-        const halfH = 410;
+
+        // Fit the full gg even on narrow phones.
+        const halfH = Math.max(470, 390 / aspect);
         camera.left = -halfH * aspect;
         camera.right = halfH * aspect;
         camera.top = halfH;
@@ -212,21 +208,18 @@
       }
       addEventListener('resize', resize);
       resize();
-      setMono(true);
       status.remove();
 
       function animate(now) {
         const dt = Math.min((now - lastTime) / 1000, 0.05);
         lastTime = now;
-        if (autoMotion && !dragging) phase += dt * 0.72 * direction;
 
-        // Oscillation rather than a full spin repeatedly removes a stable
-        // rotation-direction cue and emphasizes kinetic-depth ambiguity.
-        const yaw = Math.sin(phase) * 0.42;
-        const roll = Math.sin(phase * 0.5) * 0.035;
-        const pitch = Math.cos(phase * 0.7) * 0.055;
-        rig.rotation.set(userPitch + pitch, userYaw + yaw, roll);
+        // Continuous uniform 360° rotation around Y. No oscillation.
+        if (running && !dragging) angle += angularSpeed * dt * direction;
+        angle = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        cloud.rotation.y = angle;
 
+        angleLabel.textContent = `${Math.round(THREE.MathUtils.radToDeg(angle)) % 360}°`;
         renderer.render(scene, camera);
         requestAnimationFrame(animate);
       }
