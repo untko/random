@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>gg · kinetic depth · cross</title>
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --fg: #151515;
+      --muted: rgba(0,0,0,.46);
+      --border: rgba(0,0,0,.16);
+      --button-bg: rgba(244,241,234,.90);
+      --active-bg: #151515;
+      --active-fg: #f4f1ea;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; transition: background .15s linear; }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    .ui {
+      position: fixed; left: 14px; bottom: 14px; display: flex; flex-wrap: wrap; gap: 7px;
+      max-width: calc(100vw - 28px); z-index: 2; user-select: none;
+    }
+    button {
+      appearance: none; border: 1px solid var(--border); background: var(--button-bg);
+      color: var(--fg); padding: 8px 10px; border-radius: 999px; font: inherit; font-size: 11px;
+      cursor: pointer; backdrop-filter: blur(8px);
+    }
+    button[aria-pressed="true"] { background: var(--active-bg); color: var(--active-fg); }
+    .meta {
+      position: fixed; right: 14px; top: 12px; z-index: 2; color: var(--muted);
+      font-size: 10px; line-height: 1.55; text-align: right; pointer-events: none;
+    }
+    #status {
+      position: fixed; inset: 0; display: grid; place-items: center; padding: 32px; z-index: 1;
+      color: var(--muted); text-align: center; font-size: 12px; line-height: 1.5;
+      pointer-events: none;
+    }
+    #status.error { color: #b3483d; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="status">loading cross kinetic-depth stimulus...</div>
+  <div class="meta"><span id="angle">0°</span><br>cross-style recurring views · orthographic<br>drag horizontally to rotate</div>
+  <div class="ui">
+    <button id="motion" aria-pressed="true">motion on</button>
+    <button id="reverse" aria-pressed="false">reverse physical rotation</button>
+    <button id="density">dots: 10k</button>
+    <button id="theme" aria-pressed="false">theme: light</button>
+    <button id="cue" aria-pressed="false">rotation cue: off</button>
+    <button id="reset">reset</button>
+  </div>
+
+  <script type="module">
+    const status = document.querySelector('#status');
+
+    async function main() {
+      const THREE = await import('https://esm.sh/three@0.180.0');
+
+      const app = document.querySelector('#app');
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.sortObjects = false;
+      app.appendChild(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 3000);
+      camera.position.set(0, 0, 1000);
+      camera.lookAt(0, 0, 0);
+
+      const root = new THREE.Group();
+      scene.add(root);
+      const cueGroup = new THREE.Group();
+      root.add(cueGroup);
+
+      const gPath = `M590,515 C590,586,537,666,366,666 C366,666,376,639,376,639 C460,637,493,606,493,581 C493,488,20,615,20,402 C20,335,66,288,114,263 C60,229,24,177,24,104 C24,-62,191,-118,341,-118 C419,-118,464,-133,494,-215 C513,-266,538,-279,560,-279 C592,-279,615,-251,605,-216 C581,-129,465,-108,414,-98 C509,-66,589,-11,589,102 C589,257,442,316,311,316 C254,316,195,305,147,281 C129,286,108,306,108,329 C108,440,590,303,590,515Z M306,-94 C244,-94,175,-41,175,101 C175,243,244,296,306,296 C368,296,438,243,438,101 C438,-41,368,-94,306,-94Z`;
+      const testCanvas = document.createElement('canvas');
+      const ctx = testCanvas.getContext('2d');
+      if (!ctx || typeof Path2D === 'undefined') throw new Error('Path2D is not supported in this browser');
+      const path = new Path2D(gPath);
+      const bounds = { minX: 20, maxX: 615, minY: -279, maxY: 666 };
+
+      function mulberry32(seed) {
+        return function () {
+          let t = seed += 0x6D2B79F5;
+          t = Math.imul(t ^ t >>> 15, t | 1);
+          t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+      }
+
+      const densityPresets = [
+        { label: '6k', n1: 1800, n2: 1200, size: 2.8, faceScale: 0.40, thickness: 22 },
+        { label: '10k', n1: 3000, n2: 2000, size: 2.5, faceScale: 0.40, thickness: 24 },
+        { label: '16k', n1: 4800, n2: 3200, size: 2.2, faceScale: 0.40, thickness: 24 },
+        { label: '24k', n1: 7200, n2: 4800, size: 1.9, faceScale: 0.40, thickness: 26 }
+      ];
+      let densityIndex = 1;
+
+      const dotCanvas = document.createElement('canvas');
+      dotCanvas.width = dotCanvas.height = 32;
+      const dctx = dotCanvas.getContext('2d');
+      dctx.fillStyle = '#fff';
+      dctx.beginPath();
+      dctx.arc(16, 16, 13, 0, Math.PI * 2);
+      dctx.fill();
+      const dotTexture = new THREE.CanvasTexture(dotCanvas);
+
+      let cloud = null;
+      let darkTheme = false;
+      let cueOn = false;
+
+      function sampleFacePoints(count, seedOffset, faceScale, thickness) {
+        const rand = mulberry32(0x4c055 + seedOffset * 911);
+        const positions = [];
+        let accepted = 0;
+        let attempts = 0;
+        const maxAttempts = count * 12;
+        while (accepted < count && attempts++ < maxAttempts) {
+          const x0 = bounds.minX + rand() * (bounds.maxX - bounds.minX);
+          const y0 = bounds.minY + rand() * (bounds.maxY - bounds.minY);
+          if (!ctx.isPointInPath(path, x0, y0, 'evenodd')) continue;
+          const x = (x0 - 318) * faceScale;
+          const y = -(y0 - 194) * faceScale;
+          const z = (rand() - 0.5) * thickness;
+          positions.push(x, y, z);
+          accepted++;
+        }
+        return positions;
+      }
+
+      function buildCrossPositions(preset) {
+        const base = [
+          ...sampleFacePoints(preset.n1, densityIndex * 10 + 1, preset.faceScale, preset.thickness),
+          ...sampleFacePoints(preset.n2, densityIndex * 10 + 2, preset.faceScale * 0.82, preset.thickness)
+        ];
+
+        const positions = [];
+        for (let i = 0; i < base.length; i += 3) {
+          positions.push(base[i], base[i + 1], base[i + 2]);
+        }
+        for (let i = 0; i < base.length; i += 3) {
+          const lx = base[i];
+          const ly = base[i + 1];
+          const lz = base[i + 2];
+          positions.push(lz, ly, -lx);
+        }
+        return positions;
+      }
+
+      function themeValues() {
+        return darkTheme
+          ? { bg: 0x111315, dot: 0xf4f1ea, cueA: 0xff8b5e, cueB: 0x69b7ff, axis: 0x9aa3ab, css: {
+              bg: '#111315', fg: '#f4f1ea', muted: 'rgba(244,241,234,.54)',
+              border: 'rgba(255,255,255,.18)', buttonBg: 'rgba(17,19,21,.90)',
+              activeBg: '#f4f1ea', activeFg: '#111315'
+            }}
+          : { bg: 0xf4f1ea, dot: 0x171717, cueA: 0xc84e24, cueB: 0x2d73c9, axis: 0x8f8a81, css: {
+              bg: '#f4f1ea', fg: '#151515', muted: 'rgba(0,0,0,.46)',
+              border: 'rgba(0,0,0,.16)', buttonBg: 'rgba(244,241,234,.90)',
+              activeBg: '#151515', activeFg: '#f4f1ea'
+            }};
+      }
+
+      function applyTheme() {
+        const theme = themeValues();
+        renderer.setClearColor(theme.bg, 1);
+        if (cloud) cloud.material.color.setHex(theme.dot);
+        const rootStyle = document.documentElement.style;
+        rootStyle.setProperty('--bg', theme.css.bg);
+        rootStyle.setProperty('--fg', theme.css.fg);
+        rootStyle.setProperty('--muted', theme.css.muted);
+        rootStyle.setProperty('--border', theme.css.border);
+        rootStyle.setProperty('--button-bg', theme.css.buttonBg);
+        rootStyle.setProperty('--active-bg', theme.css.activeBg);
+        rootStyle.setProperty('--active-fg', theme.css.activeFg);
+
+        cueGroup.children.forEach((child) => {
+          if (child.userData.kind === 'near') child.material.color.setHex(theme.cueA);
+          if (child.userData.kind === 'far') child.material.color.setHex(theme.cueB);
+          if (child.userData.kind === 'axis') child.material.color.setHex(theme.axis);
+        });
+      }
+
+      function rebuildCue() {
+        while (cueGroup.children.length) {
+          const child = cueGroup.children.pop();
+          child.geometry?.dispose?.();
+          child.material?.dispose?.();
+        }
+        cueGroup.clear();
+
+        const theme = themeValues();
+        const axisGeom = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, 0, -150),
+          new THREE.Vector3(0, 0, 150)
+        ]);
+        const axis = new THREE.Line(axisGeom, new THREE.LineBasicMaterial({ color: theme.axis, transparent: true, opacity: 0.65 }));
+        axis.userData.kind = 'axis';
+        cueGroup.add(axis);
+
+        const near = new THREE.Mesh(
+          new THREE.SphereGeometry(12, 18, 18),
+          new THREE.MeshBasicMaterial({ color: theme.cueA })
+        );
+        near.position.set(0, 0, 150);
+        near.userData.kind = 'near';
+        cueGroup.add(near);
+
+        const far = new THREE.Mesh(
+          new THREE.SphereGeometry(8, 16, 16),
+          new THREE.MeshBasicMaterial({ color: theme.cueB })
+        );
+        far.position.set(0, 0, -150);
+        far.userData.kind = 'far';
+        cueGroup.add(far);
+
+        cueGroup.visible = cueOn;
+      }
+
+      function buildCloud() {
+        const preset = densityPresets[densityIndex];
+        const positions = buildCrossPositions(preset);
+        if (cloud) {
+          root.remove(cloud);
+          cloud.geometry.dispose();
+          cloud.material.dispose();
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        const material = new THREE.PointsMaterial({
+          color: themeValues().dot,
+          size: preset.size,
+          map: dotTexture,
+          alphaTest: 0.35,
+          transparent: true,
+          sizeAttenuation: false,
+          depthTest: false,
+          depthWrite: false,
+          blending: THREE.NormalBlending
+        });
+        cloud = new THREE.Points(geometry, material);
+        cloud.frustumCulled = false;
+        root.add(cloud);
+      }
+
+      let running = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+      let direction = 1;
+      let angle = 0;
+      let dragging = false;
+      let lastX = 0;
+      let lastTime = performance.now();
+      const angularSpeed = THREE.MathUtils.degToRad(28);
+
+      const motionBtn = document.querySelector('#motion');
+      const reverseBtn = document.querySelector('#reverse');
+      const densityBtn = document.querySelector('#density');
+      const themeBtn = document.querySelector('#theme');
+      const cueBtn = document.querySelector('#cue');
+      const resetBtn = document.querySelector('#reset');
+      const angleLabel = document.querySelector('#angle');
+
+      motionBtn.setAttribute('aria-pressed', String(running));
+      motionBtn.textContent = running ? 'motion on' : 'motion off';
+
+      motionBtn.addEventListener('click', () => {
+        running = !running;
+        motionBtn.setAttribute('aria-pressed', String(running));
+        motionBtn.textContent = running ? 'motion on' : 'motion off';
+      });
+
+      reverseBtn.addEventListener('click', () => {
+        direction *= -1;
+        reverseBtn.setAttribute('aria-pressed', direction < 0 ? 'true' : 'false');
+      });
+
+      densityBtn.addEventListener('click', () => {
+        densityIndex = (densityIndex + 1) % densityPresets.length;
+        densityBtn.textContent = `dots: ${densityPresets[densityIndex].label}`;
+        buildCloud();
+      });
+
+      themeBtn.addEventListener('click', () => {
+        darkTheme = !darkTheme;
+        themeBtn.setAttribute('aria-pressed', String(darkTheme));
+        themeBtn.textContent = `theme: ${darkTheme ? 'dark' : 'light'}`;
+        applyTheme();
+      });
+
+      cueBtn.addEventListener('click', () => {
+        cueOn = !cueOn;
+        cueBtn.setAttribute('aria-pressed', String(cueOn));
+        cueBtn.textContent = `rotation cue: ${cueOn ? 'on' : 'off'}`;
+        cueGroup.visible = cueOn;
+      });
+
+      resetBtn.addEventListener('click', () => { angle = 0; });
+
+      renderer.domElement.addEventListener('pointerdown', (e) => {
+        dragging = true;
+        lastX = e.clientX;
+        renderer.domElement.setPointerCapture(e.pointerId);
+      });
+      renderer.domElement.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - lastX;
+        lastX = e.clientX;
+        angle += dx * 0.009;
+      });
+      renderer.domElement.addEventListener('pointerup', () => { dragging = false; });
+      renderer.domElement.addEventListener('pointercancel', () => { dragging = false; });
+
+      function resize() {
+        const w = Math.max(innerWidth, 1);
+        const h = Math.max(innerHeight, 1);
+        renderer.setSize(w, h, false);
+        const aspect = w / h;
+        const halfH = Math.max(330, 280 / aspect);
+        camera.left = -halfH * aspect;
+        camera.right = halfH * aspect;
+        camera.top = halfH;
+        camera.bottom = -halfH;
+        camera.updateProjectionMatrix();
+      }
+
+      addEventListener('resize', resize);
+      resize();
+      buildCloud();
+      rebuildCue();
+      applyTheme();
+      status.remove();
+
+      function animate(now) {
+        const dt = Math.min((now - lastTime) / 1000, 0.05);
+        lastTime = now;
+        if (running && !dragging) angle += angularSpeed * dt * direction;
+        angle = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        root.rotation.y = angle;
+        angleLabel.textContent = `${Math.round(THREE.MathUtils.radToDeg(angle)) % 360}°`;
+        renderer.render(scene, camera);
+        requestAnimationFrame(animate);
+      }
+      requestAnimationFrame(animate);
+    }
+
+    main().catch((error) => {
+      console.error(error);
+      status.classList.add('error');
+      status.innerHTML = `Could not start the Cross-style Three.js demo.<br>${String(error.message || error)}`;
+    });
+  </script>
+</body>
+</html>
